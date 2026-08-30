@@ -188,14 +188,19 @@
   .pct{ display:flex; align-items:center; gap:4px; font-size:12.5px; font-weight:700; }
 
   .print-summary{ display:none; }
+  .print-summary.pdf-capture{ display:block; width:800px; max-width:100%; margin:0 auto; background:#fff; }
+  body.generating-pdf .page{ display:none !important; }
+  body.generating-pdf{ background:#fff; }
 
   @media print{
     .page{ display:none !important; }
-    .print-summary{ display:block !important; }
+    .print-summary{ display:block !important; width:auto !important; }
     html, body{ background:#fff !important; color:#111; }
     @page{ margin:14mm 12mm; }
   }
 </style>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
 <div class="page">
   <div class="brand">
@@ -680,7 +685,7 @@ function renderStep4(){
   '<div style="margin-top:16px;">'+cards+'</div>'+
   '<div class="btn-row">'+
     '<button class="btn btn-ghost" onclick="setStep(2)">Editar perfil</button>'+
-    '<button class="btn btn-primary" onclick="gerarProposta()">Gerar proposta em PDF</button>'+
+    '<button class="btn btn-primary" id="btnGerarPdf" onclick="gerarProposta()">Gerar proposta em PDF</button>'+
   '</div>'+
   '<div class="btn-row"><button class="btn btn-ghost" style="flex:1;" onclick="restart()">Recomeçar com outro cliente</button></div>';
 }
@@ -714,9 +719,70 @@ function restart(){
   window.scrollTo({top:0, behavior:'smooth'});
 }
 
-function gerarProposta(){
+function slugify(txt){
+  return (txt||'cliente').toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || 'cliente';
+}
+
+async function gerarProposta(){
+  var btn = document.getElementById('btnGerarPdf');
+  var container = document.getElementById('printSummary');
+
+  // Sem a biblioteca de geração (ex.: sem internet nesse momento) cai direto no
+  // modo de impressão do navegador — ainda funciona, só volta a pedir impressora.
+  if(typeof html2pdf === 'undefined'){
+    buildPrintSummary();
+    window.print();
+    return;
+  }
+
+  if(btn){ btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = 'Gerando PDF…'; }
   buildPrintSummary();
-  window.print();
+  document.body.classList.add('generating-pdf');
+  container.classList.add('pdf-capture');
+
+  var filename = 'proposta-norte-'+slugify(state.client.name)+'.pdf';
+
+  try{
+    var pdfBlob = await html2pdf().set({
+      margin: 0,
+      image: { type:'jpeg', quality:0.95 },
+      html2canvas: { scale:2, useCORS:true, backgroundColor:'#ffffff' },
+      jsPDF: { unit:'mm', format:'a4', orientation:'portrait' },
+      pagebreak: { mode:['css','legacy'] }
+    }).from(container).outputPdf('blob');
+
+    var file = new File([pdfBlob], filename, { type:'application/pdf' });
+
+    if(navigator.canShare && navigator.canShare({ files:[file] })){
+      try{
+        await navigator.share({
+          files:[file],
+          title:'Proposta de investimentos — Norte',
+          text:'Proposta de alocação para '+(state.client.name||'cliente')+'.'
+        });
+      }catch(shareErr){
+        // Usuário cancelou o compartilhamento — não é um erro, não faz nada.
+        if(shareErr && shareErr.name !== 'AbortError') throw shareErr;
+      }
+    } else {
+      var url = URL.createObjectURL(pdfBlob);
+      var a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+    }
+  }catch(err){
+    console.error('Falha ao gerar PDF direto:', err);
+    container.classList.remove('pdf-capture');
+    document.body.classList.remove('generating-pdf');
+    window.print(); // último recurso: modo de impressão do navegador
+  }finally{
+    container.classList.remove('pdf-capture');
+    document.body.classList.remove('generating-pdf');
+    if(btn){ btn.disabled = false; btn.textContent = btn.dataset.label || 'Gerar proposta em PDF'; }
+  }
 }
 
 function answerLabel(qKey){
@@ -749,14 +815,22 @@ function buildPrintSummary(){
   var geradoEm = new Date().toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric' });
 
   var HEXMAP = { rfpos:'#3987e5', rfinfl:'#d95926', acoesbr:'#199e70', fiis:'#c98500', intl:'#d55181', alt:'#008300', prev:'#9085e9' };
+  // Nota: linhas em <div>/flex, não <table> — o html2canvas (usado para gerar o PDF
+  // direto, sem diálogo de impressão) renderiza tabelas HTML de forma inconsistente
+  // (texto quase invisível em alguns navegadores); divs são fiéis ao original.
+  var tableHead = '<div style="display:flex; padding:8px 10px; border-bottom:2px solid #0b0e14; font-size:11.5px; font-weight:700; color:#111;">'+
+    '<div style="flex:1;">Classe</div><div style="width:56px; text-align:right;">%</div><div style="width:96px; text-align:right;">Valor</div></div>';
   var rowsFixed = ASSET_CLASSES.map(function(a){
     var pct = alloc[a.key] || 0;
     if(pct<=0) return '';
     var val = Math.round(amount*pct/100);
-    return '<tr>'+
-      '<td style="padding:8px 10px; border-bottom:1px solid #e4e4e4;"><span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:'+HEXMAP[a.key]+'; margin-right:8px; vertical-align:middle;"></span>'+a.label+'</td>'+
-      '<td style="padding:8px 10px; border-bottom:1px solid #e4e4e4; text-align:right;">'+pct+'%</td>'+
-      '<td style="padding:8px 10px; border-bottom:1px solid #e4e4e4; text-align:right; font-variant-numeric:tabular-nums;">'+brl(val)+'</td></tr>';
+    return '<div style="display:flex; align-items:center; padding:8px 10px; border-bottom:1px solid #e4e4e4; font-size:12.5px; color:#222;">'+
+      '<div style="flex:1; display:flex; align-items:center; gap:8px;">'+
+        '<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:'+HEXMAP[a.key]+'; flex-shrink:0;"></span>'+a.label+
+      '</div>'+
+      '<div style="width:56px; text-align:right;">'+pct+'%</div>'+
+      '<div style="width:96px; text-align:right; font-variant-numeric:tabular-nums;">'+brl(val)+'</div>'+
+    '</div>';
   }).join('');
 
   var detalhes = ASSET_CLASSES.map(function(a){
@@ -824,11 +898,7 @@ function buildPrintSummary(){
       brandHeader+
       '<h1 style="font-family:\'Space Grotesk\',sans-serif; font-size:20px; margin:0 0 4px;">Carteira sugerida</h1>'+
       '<p style="font-size:12px; color:#777; margin:0 0 16px;">'+(state.client.name||'Cliente')+' · Perfil '+profile+' · '+brl(amount)+'</p>'+
-      '<table style="width:100%; border-collapse:collapse;"><thead><tr>'+
-        '<th style="text-align:left; padding:8px 10px; border-bottom:2px solid #0b0e14; font-size:11.5px;">Classe</th>'+
-        '<th style="text-align:right; padding:8px 10px; border-bottom:2px solid #0b0e14; font-size:11.5px;">%</th>'+
-        '<th style="text-align:right; padding:8px 10px; border-bottom:2px solid #0b0e14; font-size:11.5px;">Valor</th>'+
-      '</tr></thead><tbody>'+rowsFixed+'</tbody></table>'+
+      '<div>'+tableHead+rowsFixed+'</div>'+
       '<h2 style="font-family:\'Space Grotesk\',sans-serif; font-size:15px; margin:22px 0 0;">Detalhamento por classe</h2>'+
       detalhes+
       signature+
