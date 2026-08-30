@@ -190,9 +190,14 @@
   .pct{ display:flex; align-items:center; gap:4px; font-size:12.5px; font-weight:700; }
 
   .print-summary{ display:none; }
-  .print-summary.pdf-capture{ display:block; width:800px; max-width:100%; margin:0 auto; background:#fff; }
+  /* Largura fixa (sem max-width:100%) mesmo durante a captura em telas pequenas:
+     se o container encolhesse para a largura da tela do celular, o texto quebraria
+     em muito mais linhas, o conteúdo ficaria bem mais alto, e o fatiamento em
+     páginas do PDF saía errado (páginas em branco / com pouco conteúdo). Fixando
+     800px sempre, a paginação do PDF fica igual em qualquer dispositivo. */
+  .print-summary.pdf-capture{ display:block; width:800px; margin:0 auto; background:#fff; }
   body.generating-pdf .page{ display:none !important; }
-  body.generating-pdf{ background:#fff; }
+  body.generating-pdf{ background:#fff; overflow-x:hidden; }
 
   @media print{
     .page{ display:none !important; }
@@ -459,7 +464,7 @@ var state = {
   step: 1,
   client: { name:'Marina Torres', age:'34', amount:250000 },
   answers: { horizonte:'5-10', objetivo:'crescer', conhecimento:'intermediario', patrimonio:'10-30', liquidez:'nao', perda:'mantem' },
-  selectedClasses: ASSET_CLASSES.map(function(a){ return a.key; })
+  selectedClasses: []
 };
 
 var ASSET_CLASS_DESC = {
@@ -651,11 +656,12 @@ function renderStep3(){
     '<button class="backbtn" onclick="setStep(2)" aria-label="Voltar">'+chevronLeft()+'</button>'+
     '<h1 class="title" style="font-size:19px;">Quais investimentos considerar?</h1>'+
   '</div>'+
-  '<p class="sub" style="margin:10px 0 16px;">Pré-selecionamos todas as classes recomendadas para o perfil. Desmarque o que não for do interesse do cliente — o restante da carteira se ajusta automaticamente para somar 100%.</p>'+
+  '<p class="sub" style="margin:10px 0 16px;">Escolha quais classes de ativo devem entrar na carteira deste cliente. A alocação é distribuída entre as classes marcadas, sempre somando 100%.</p>'+
   '<div class="opts">'+opts+'</div>'+
   '<div class="btn-row">'+
-    '<button class="btn btn-primary" style="flex:1;" onclick="setStep(4)">Ver carteira sugerida →</button>'+
-  '</div>';
+    '<button class="btn btn-primary" style="flex:1;" '+(state.selectedClasses.length===0?'disabled':'')+' onclick="setStep(4)">Ver carteira sugerida →</button>'+
+  '</div>'+
+  (state.selectedClasses.length===0 ? '<p class="sub" style="margin:10px 0 0; text-align:center;">Selecione ao menos uma classe para continuar.</p>' : '');
 }
 
 function renderStep4(){
@@ -805,16 +811,91 @@ function restart(){
     step: 1,
     client: { name:'', age:'', amount:0 },
     answers: { horizonte:null, objetivo:null, conhecimento:null, patrimonio:null, liquidez:null, perda:null },
-    selectedClasses: ASSET_CLASSES.map(function(a){ return a.key; })
+    selectedClasses: []
   };
   render();
   window.scrollTo({top:0, behavior:'smooth'});
+}
+
+function waitImagesReady(container){
+  var imgs = Array.prototype.slice.call(container.querySelectorAll('img'));
+  if(!imgs.length) return Promise.resolve();
+  return Promise.all(imgs.map(function(img){
+    if(img.complete) return Promise.resolve();
+    return new Promise(function(resolve){
+      img.addEventListener('load', resolve, { once:true });
+      img.addEventListener('error', resolve, { once:true });
+    });
+  }));
 }
 
 function slugify(txt){
   return (txt||'cliente').toLowerCase()
     .normalize('NFD').replace(/[̀-ͯ]/g,'')
     .replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || 'cliente';
+}
+
+/* ---------- Captura do PDF, página a página ----------
+   Ver o comentário em gerarProposta(): cada página do relatório é fotografada
+   (html2canvas) isoladamente e colada num PDF (jsPDF) por nós mesmos, em vez de
+   deixar o html2pdf.js cortar automaticamente um "rolo" único com tudo junto —
+   esse corte automático ("legacy") saía errado em celulares. */
+
+async function captureReportPage(container, pageHtml){
+  container.innerHTML = pageHtml;
+  // Espera o layout com largura fixa (800px) pintar e a foto da assinatura
+  // carregar antes de fotografar — capturar cedo demais gera páginas em branco
+  // ou incompletas em aparelhos mais lentos.
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  await waitImagesReady(container);
+  var worker = html2pdf().set({
+    html2canvas: { scale:2, useCORS:true, backgroundColor:'#ffffff', windowWidth:800, windowHeight: container.scrollHeight }
+  }).from(container);
+  await worker.toCanvas();
+  return await worker.get('canvas');
+}
+
+// O html2pdf.js não expõe a classe jsPDF diretamente (só instâncias já criadas,
+// e nem essas são instâncias "de verdade" — são objetos simples, sem construtor
+// reaproveitável). Por isso criamos o PDF a partir do canvas real da 1ª página
+// (curta, sempre cabe numa única folha — já confirmado por teste) e, a partir
+// daí, colamos as páginas seguintes manualmente com addCanvasToPdf().
+async function canvasParaNovoPdf(canvas){
+  var worker = html2pdf().set({
+    margin: 0,
+    jsPDF: { unit:'mm', format:'a4', orientation:'portrait' },
+    pagebreak: { mode:['css','legacy'] }
+  }).from(canvas, 'canvas');
+  await worker.toPdf();
+  return await worker.get('pdf');
+}
+
+// Cola um canvas (uma página do relatório) no PDF, fatiando manualmente em
+// blocos do tamanho de uma página A4 caso o conteúdo seja mais alto que isso
+// (ex.: muitas classes de ativo selecionadas). Matemática simples e nossa —
+// não depende do algoritmo de corte automático do html2pdf.js.
+function addCanvasToPdf(pdf, canvas){
+  var pageW = pdf.internal.pageSize.getWidth();
+  var pageH = pdf.internal.pageSize.getHeight();
+  var pxPerMm = canvas.width / pageW;
+  var sliceHeightPx = Math.floor(pageH * pxPerMm);
+  var renderedPx = 0;
+  while(renderedPx < canvas.height){
+    pdf.addPage();
+    var thisSliceH = Math.min(sliceHeightPx, canvas.height - renderedPx);
+    var sliceCanvas = document.createElement('canvas');
+    sliceCanvas.width = canvas.width;
+    sliceCanvas.height = thisSliceH;
+    var ctx = sliceCanvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
+    ctx.drawImage(canvas, 0, renderedPx, canvas.width, thisSliceH, 0, 0, canvas.width, thisSliceH);
+    var sliceData = sliceCanvas.toDataURL('image/jpeg', 0.95);
+    var sliceHmm = (thisSliceH * pageW) / canvas.width;
+    pdf.addImage(sliceData, 'JPEG', 0, 0, pageW, sliceHmm);
+    renderedPx += thisSliceH;
+    primeiraFatia = false;
+  }
 }
 
 async function gerarProposta(){
@@ -830,21 +911,32 @@ async function gerarProposta(){
   }
 
   if(btn){ btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = 'Gerando PDF…'; }
-  buildPrintSummary();
   document.body.classList.add('generating-pdf');
   container.classList.add('pdf-capture');
 
   var filename = 'proposta-norte-'+slugify(state.client.name)+'.pdf';
 
   try{
-    var pdfBlob = await html2pdf().set({
-      margin: 0,
-      image: { type:'jpeg', quality:0.95 },
-      html2canvas: { scale:2, useCORS:true, backgroundColor:'#ffffff' },
-      jsPDF: { unit:'mm', format:'a4', orientation:'portrait' },
-      pagebreak: { mode:['css','legacy'] }
-    }).from(container).outputPdf('blob');
+    // Cada página do relatório (buildReportPages) é fotografada e colada no PDF
+    // separadamente, em vez de fotografar tudo de uma vez e deixar a biblioteca
+    // cortar automaticamente onde ela achar melhor ("modo legacy"). Esse corte
+    // automático se mostrou não confiável em telas de celular com tela de alta
+    // densidade (a maioria dos smartphones): o PDF saía com páginas em branco ou
+    // com pouquíssimo conteúdo, sem relação com o que aparece na tela de
+    // Relatório. Fotografando página a página nós controlamos exatamente onde
+    // cada corte acontece — o que sai no PDF é sempre igual ao que é mostrado.
+    var pages = buildReportPages();
+    var pdf = null;
+    for(var i=0;i<pages.length;i++){
+      var canvas = await captureReportPage(container, pages[i]);
+      if(i === 0){
+        pdf = await canvasParaNovoPdf(canvas);
+      } else {
+        addCanvasToPdf(pdf, canvas);
+      }
+    }
 
+    var pdfBlob = pdf.output('blob');
     var file = new File([pdfBlob], filename, { type:'application/pdf' });
 
     if(navigator.canShare && navigator.canShare({ files:[file] })){
@@ -869,6 +961,7 @@ async function gerarProposta(){
     console.error('Falha ao gerar PDF direto:', err);
     container.classList.remove('pdf-capture');
     document.body.classList.remove('generating-pdf');
+    buildPrintSummary();
     window.print(); // último recurso: modo de impressão do navegador
   }finally{
     container.classList.remove('pdf-capture');
@@ -905,7 +998,7 @@ function buildPrintSummary(){
   document.getElementById('printSummary').innerHTML = buildReportHTML();
 }
 
-function buildReportHTML(){
+function buildReportPages(){
   var profile = currentProfile();
   var alloc = effectiveAllocation(profile, state.selectedClasses);
   var amount = state.client.amount;
@@ -1002,7 +1095,15 @@ function buildReportHTML(){
       pageFooter+
     '</div>';
 
-  return page1 + page2;
+  return [page1, page2];
+}
+
+// Usada na pré-visualização em tela (passo 6) — as duas páginas uma embaixo da
+// outra, como um documento contínuo. Para o PDF de verdade, ver buildReportPages()
+// e a captura página a página em gerarProposta() (mais confiável em celular).
+function buildReportHTML(){
+  var pages = buildReportPages();
+  return pages[0] + pages[1];
 }
 
 /* ---------- Render principal ---------- */
