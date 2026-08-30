@@ -141,6 +141,8 @@
   .opt[aria-pressed="true"]{ border-color:var(--accent-line); background:var(--accent-soft); color:var(--text); }
   .opt .dot{ width:18px; height:18px; border-radius:50%; border:1.6px solid var(--text-3); flex-shrink:0; }
   .opt[aria-pressed="true"] .dot{ border:5px solid var(--accent); }
+  .opt .dot.chk{ border-radius:5px; margin-top:1px; }
+  .opt[aria-pressed="true"] .dot.chk{ border:1.6px solid var(--accent); background:var(--accent); }
 
   .btn{
     height:52px; border-radius:14px; border:none; font-family:var(--font-body); font-weight:700;
@@ -456,8 +458,44 @@ var MAX_SCORE = QUESTIONS.reduce(function(sum,q){
 var state = {
   step: 1,
   client: { name:'Marina Torres', age:'34', amount:250000 },
-  answers: { horizonte:'5-10', objetivo:'crescer', conhecimento:'intermediario', patrimonio:'10-30', liquidez:'nao', perda:'mantem' }
+  answers: { horizonte:'5-10', objetivo:'crescer', conhecimento:'intermediario', patrimonio:'10-30', liquidez:'nao', perda:'mantem' },
+  selectedClasses: ASSET_CLASSES.map(function(a){ return a.key; })
 };
+
+var ASSET_CLASS_DESC = {
+  rfpos: 'Baixo risco, liquidez alta — Tesouro Selic, CDB pós-fixado.',
+  rfinfl: 'Proteção contra inflação, prazos mais longos — Tesouro IPCA+, debêntures.',
+  acoesbr: 'Renda variável no Brasil — ações negociadas na B3.',
+  fiis: 'Fundos imobiliários — renda de aluguéis e recebíveis.',
+  intl: 'Exposição internacional — ETFs de bolsas globais.',
+  alt: 'Estratégias alternativas — multimercado, ouro.',
+  prev: 'Previdência privada — VGBL, benefício tributário de longo prazo.'
+};
+
+// Recalcula a alocação do perfil considerando só as classes que o cliente
+// quer ver na carteira — redistribui proporcionalmente entre as selecionadas.
+function effectiveAllocation(profile, selectedKeys){
+  var base = ALLOCATIONS[profile];
+  selectedKeys = selectedKeys && selectedKeys.length ? selectedKeys : ASSET_CLASSES.map(function(a){ return a.key; });
+  var total = 0;
+  ASSET_CLASSES.forEach(function(a){
+    if(selectedKeys.indexOf(a.key) !== -1) total += (base[a.key] || 0);
+  });
+  if(total <= 0) return base;
+  var keys = ASSET_CLASSES.map(function(a){ return a.key; }).filter(function(k){
+    return selectedKeys.indexOf(k) !== -1 && (base[k] || 0) > 0;
+  });
+  var result = {};
+  var runningSum = 0;
+  keys.forEach(function(k, i){
+    var raw = (base[k] / total) * 100;
+    var rounded = (i === keys.length - 1) ? (100 - runningSum) : Math.round(raw);
+    runningSum += rounded;
+    result[k] = rounded;
+  });
+  ASSET_CLASSES.forEach(function(a){ if(result[a.key] == null) result[a.key] = 0; });
+  return result;
+}
 
 /* ---------- Utilidades ---------- */
 
@@ -581,13 +619,48 @@ function renderStep2(){
   '</div>'+
   qs+
   '<div class="btn-row">'+
-    '<button class="btn btn-primary" '+(n<total?'disabled':'')+' onclick="setStep(3)">Ver carteira sugerida →</button>'+
+    '<button class="btn btn-primary" '+(n<total?'disabled':'')+' onclick="setStep(3)">Continuar →</button>'+
   '</div>';
 }
 
+function toggleAssetClass(key){
+  var idx = state.selectedClasses.indexOf(key);
+  if(idx === -1){
+    state.selectedClasses.push(key);
+  } else {
+    if(state.selectedClasses.length === 1) return; // precisa deixar ao menos 1 classe selecionada
+    state.selectedClasses.splice(idx, 1);
+  }
+  render();
+}
+
 function renderStep3(){
+  var opts = ASSET_CLASSES.map(function(a){
+    var on = state.selectedClasses.indexOf(a.key) !== -1;
+    return '<button type="button" class="opt" aria-pressed="'+on+'" onclick="toggleAssetClass(\''+a.key+'\')">'+
+      '<span class="dot chk"></span>'+
+      '<span style="display:flex; flex-direction:column; gap:2px; text-align:left;">'+
+        '<span style="font-weight:700;">'+a.label+'</span>'+
+        '<span style="font-size:11.5px; color:var(--text-3);">'+(ASSET_CLASS_DESC[a.key]||'')+'</span>'+
+      '</span>'+
+    '</button>';
+  }).join('');
+
+  return ''+
+  '<div class="stephead">'+
+    '<button class="backbtn" onclick="setStep(2)" aria-label="Voltar">'+chevronLeft()+'</button>'+
+    '<h1 class="title" style="font-size:19px;">Quais investimentos considerar?</h1>'+
+  '</div>'+
+  '<p class="sub" style="margin:10px 0 16px;">Pré-selecionamos todas as classes recomendadas para o perfil. Desmarque o que não for do interesse do cliente — o restante da carteira se ajusta automaticamente para somar 100%.</p>'+
+  '<div class="opts">'+opts+'</div>'+
+  '<div class="btn-row">'+
+    '<button class="btn btn-primary" style="flex:1;" onclick="setStep(4)">Ver carteira sugerida →</button>'+
+  '</div>';
+}
+
+function renderStep4(){
   var profile = currentProfile();
-  var alloc = ALLOCATIONS[profile];
+  var alloc = effectiveAllocation(profile, state.selectedClasses);
   var amount = state.client.amount;
   var legend = ASSET_CLASSES.map(function(a){
     var pct = alloc[a.key] || 0;
@@ -601,7 +674,7 @@ function renderStep3(){
 
   return ''+
   '<div class="stephead">'+
-    '<button class="backbtn" onclick="setStep(2)" aria-label="Voltar">'+chevronLeft()+'</button>'+
+    '<button class="backbtn" onclick="setStep(3)" aria-label="Voltar">'+chevronLeft()+'</button>'+
     '<h1 class="title" style="font-size:19px;">Carteira sugerida</h1>'+
   '</div>'+
   '<div class="client-line" style="margin-top:16px;">'+
@@ -615,8 +688,8 @@ function renderStep3(){
     '<div style="display:flex; justify-content:center;">'+donutSVG(alloc)+'</div>'+
     '<div>'+legend+'</div>'+
   '</div>'+
-  '<p class="foot-note">Alocação sugerida com base no perfil apurado no questionário. Conteúdo informativo — rentabilidade passada não garante resultado futuro.</p>'+
-  '<div class="btn-row"><button class="btn btn-primary" style="flex:1;" onclick="setStep(4)">Ver ativos sugeridos →</button></div>';
+  '<p class="foot-note">Alocação sugerida com base no perfil apurado no questionário e nas classes selecionadas. Conteúdo informativo — rentabilidade passada não garante resultado futuro.</p>'+
+  '<div class="btn-row"><button class="btn btn-primary" style="flex:1;" onclick="setStep(5)">Ver ativos sugeridos →</button></div>';
 }
 
 function tickRow(item, kind){
@@ -630,17 +703,18 @@ function tickRow(item, kind){
     quoteLine(item.t);
 }
 
-function renderStep4(){
+function renderStep5(){
   var profile = currentProfile();
-  var alloc = ALLOCATIONS[profile];
+  var alloc = effectiveAllocation(profile, state.selectedClasses);
   var amount = state.client.amount;
 
   var cards = ASSET_CLASSES.map(function(a){
     var pct = alloc[a.key] || 0;
     var val = Math.round(amount * pct/100);
     var metaLine = pct+'% · '+brl(val);
+    var selected = state.selectedClasses.indexOf(a.key) !== -1;
 
-    if(a.key === 'acoesbr'){
+    if(a.key === 'acoesbr' && pct > 0){
       var altasHtml = ACOES_BR_ALTAS.map(function(x){ return tickRow(x,'up'); }).join('');
       var quedasHtml = ACOES_BR_QUEDAS.map(function(x){ return tickRow(x,'down'); }).join('');
       return '<div class="aclass-card">'+
@@ -654,8 +728,9 @@ function renderStep4(){
     }
 
     if(pct <= 0){
+      var motivo = !selected ? 'não selecionado' : 'não alocado neste perfil';
       return '<div class="aclass-card">'+
-        '<div class="aclass-head"><div class="dot" style="background:'+a.color+';"></div><span class="name">'+a.label+'</span><span class="meta">não alocado neste perfil</span></div>'+
+        '<div class="aclass-head"><div class="dot" style="background:'+a.color+';"></div><span class="name">'+a.label+'</span><span class="meta">'+motivo+'</span></div>'+
         '</div>';
     }
 
@@ -674,7 +749,7 @@ function renderStep4(){
 
   return ''+
   '<div class="stephead">'+
-    '<button class="backbtn" onclick="setStep(3)" aria-label="Voltar">'+chevronLeft()+'</button>'+
+    '<button class="backbtn" onclick="setStep(4)" aria-label="Voltar">'+chevronLeft()+'</button>'+
     '<h1 class="title" style="font-size:19px;">Ativos sugeridos</h1>'+
   '</div>'+
   '<div class="client-line" style="margin-top:16px;">'+
@@ -684,8 +759,24 @@ function renderStep4(){
   '<p class="sub">Exemplos ilustrativos dentro de cada classe. Ajuste conforme disponibilidade e liquidez do momento.</p>'+
   '<div style="margin-top:16px;">'+cards+'</div>'+
   '<div class="btn-row">'+
-    '<button class="btn btn-ghost" onclick="setStep(2)">Editar perfil</button>'+
-    '<button class="btn btn-primary" id="btnGerarPdf" onclick="gerarProposta()">Gerar proposta em PDF</button>'+
+    '<button class="btn btn-ghost" onclick="setStep(3)">Editar seleção</button>'+
+    '<button class="btn btn-primary" onclick="setStep(6)">Ver relatório →</button>'+
+  '</div>'+
+  '<div class="btn-row"><button class="btn btn-ghost" style="flex:1;" onclick="restart()">Recomeçar com outro cliente</button></div>';
+}
+
+function renderStep6(){
+  var reportHtml = buildReportHTML();
+  return ''+
+  '<div class="stephead">'+
+    '<button class="backbtn" onclick="setStep(5)" aria-label="Voltar">'+chevronLeft()+'</button>'+
+    '<h1 class="title" style="font-size:19px;">Relatório</h1>'+
+  '</div>'+
+  '<p class="sub" style="margin:10px 0 16px;">É exatamente isto que vai ser gerado em PDF e compartilhado.</p>'+
+  '<div style="background:#fff; border-radius:16px; overflow:hidden; box-shadow:0 20px 50px -30px rgba(0,0,0,0.7);">'+reportHtml+'</div>'+
+  '<div class="btn-row" style="margin-top:20px;">'+
+    '<button class="btn btn-ghost" onclick="setStep(5)">Voltar e ajustar</button>'+
+    '<button class="btn btn-primary" id="btnGerarPdf" onclick="gerarProposta()">Compartilhar</button>'+
   '</div>'+
   '<div class="btn-row"><button class="btn btn-ghost" style="flex:1;" onclick="restart()">Recomeçar com outro cliente</button></div>';
 }
@@ -713,7 +804,8 @@ function restart(){
   state = {
     step: 1,
     client: { name:'', age:'', amount:0 },
-    answers: { horizonte:null, objetivo:null, conhecimento:null, patrimonio:null, liquidez:null, perda:null }
+    answers: { horizonte:null, objetivo:null, conhecimento:null, patrimonio:null, liquidez:null, perda:null },
+    selectedClasses: ASSET_CLASSES.map(function(a){ return a.key; })
   };
   render();
   window.scrollTo({top:0, behavior:'smooth'});
@@ -800,7 +892,8 @@ function buildRationaleHTML(profile){
   var patrimonio = answerLabel('patrimonio').toLowerCase();
   var liquidez = answerLabel('liquidez').toLowerCase();
   var perda = answerLabel('perda').toLowerCase();
-  var nClasses = Object.keys(ALLOCATIONS[profile]).filter(function(k){ return ALLOCATIONS[profile][k] > 0; }).length;
+  var effAlloc = effectiveAllocation(profile, state.selectedClasses);
+  var nClasses = Object.keys(effAlloc).filter(function(k){ return effAlloc[k] > 0; }).length;
 
   var p1 = 'Com base nas respostas do questionário de suitability aplicado, o perfil de investidor identificado foi <strong>'+profile+'</strong>. '+PROFILE_DESC[profile];
   var p2 = 'Essa classificação considera, em conjunto: horizonte de investimento de <strong>'+horizonte+'</strong>; objetivo principal de <strong>'+objetivo+'</strong>; nível de conhecimento em investimentos <strong>'+conhecimento+'</strong>; o valor investido representando <strong>'+patrimonio+'</strong> do patrimônio total informado; necessidade de liquidez declarada como <strong>"'+liquidez+'"</strong>; e, diante de uma queda hipotética de 20% em 3 meses, a reação declarada de <strong>"'+perda+'"</strong>.';
@@ -809,8 +902,12 @@ function buildRationaleHTML(profile){
 }
 
 function buildPrintSummary(){
+  document.getElementById('printSummary').innerHTML = buildReportHTML();
+}
+
+function buildReportHTML(){
   var profile = currentProfile();
-  var alloc = ALLOCATIONS[profile];
+  var alloc = effectiveAllocation(profile, state.selectedClasses);
   var amount = state.client.amount;
   var geradoEm = new Date().toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric' });
 
@@ -905,7 +1002,7 @@ function buildPrintSummary(){
       pageFooter+
     '</div>';
 
-  document.getElementById('printSummary').innerHTML = page1 + page2;
+  return page1 + page2;
 }
 
 /* ---------- Render principal ---------- */
@@ -915,7 +1012,9 @@ function render(){
   if(state.step === 1) html = renderStep1();
   else if(state.step === 2) html = renderStep2();
   else if(state.step === 3) html = renderStep3();
-  else html = renderStep4();
+  else if(state.step === 4) html = renderStep4();
+  else if(state.step === 5) html = renderStep5();
+  else html = renderStep6();
   document.getElementById('shell').innerHTML = html;
 }
 
