@@ -265,7 +265,7 @@ var ASSET_EXAMPLES = {
 // Nota de fonte/data — só para classes com taxa que muda com frequência (renda fixa).
 // Texto usado quando a busca ao vivo no Banco Central não estiver disponível
 // (ex.: dentro do sandbox do Claude, que bloqueia chamadas externas) — atualizar manualmente a cada nova consulta às bases.
-var RF_FALLBACK_NOTE = 'Selic 14,00% a.a. e CDI ≈13,90% a.a. (Copom, 15/08/2026 — fonte: Banco Central/Copom). CDBs hoje giram entre 100% do CDI (bancos grandes) e até 150% do CDI (bancos médios/corretoras, liquidez menor) — fonte: levantamento de mercado, 06/08/2026. Confirmar taxa e vencimento vigentes antes de qualquer operação; este não é um preço firme.';
+var RF_FALLBACK_NOTE = 'Selic 14,00% a.a. e CDI ≈13,90% a.a. (Copom, 15/08/2026 — fonte: Banco Central/Copom). CDBs hoje giram entre 100% do CDI (bancos grandes, ex.: Itaú, Bradesco, Santander, BTG Pactual) e até 150% do CDI em ofertas promocionais de bancos digitais/médios (ex.: Neon, PagBank) — fonte: levantamento de mercado (idinheiro.com.br), consultado em 03/09/2026. Confirmar taxa e vencimento vigentes antes de qualquer operação; este não é um preço firme.';
 
 /* ---------- Dados ao vivo (Banco Central — API SGS) ----------
    Séries: 432 = Meta Selic definida pelo Copom (% a.a.), 12 = CDI (% ao dia).
@@ -372,22 +372,22 @@ function rfReferenceBlock(){
     '<p style="margin:0; font-size:10.5px; color:var(--text-3); line-height:1.5;">'+rfReferenceText()+'</p></div>';
 }
 
-// Movimentos reais de mercado (B3, dados de 23/08/2026) — conteúdo estático informativo.
+// Movimentos reais de mercado (B3, dados de 03/09/2026) — conteúdo estático informativo.
 var ACOES_BR_ALTAS = [
-  { t:'EMBJ3', n:'Embraer', p:'+8,6%' },
-  { t:'PRIO3', n:'Prio', p:'+7,4%' },
-  { t:'FLRY3', n:'Fleury', p:'+9,7%*' }
+  { t:'SLCE3', n:'SLC Agrícola', p:'+20,4%' },
+  { t:'CSNA3', n:'CSN', p:'+18,0%' },
+  { t:'MRVE3', n:'MRV', p:'+17,7%' }
 ];
 var ACOES_BR_QUEDAS = [
-  { t:'HAPV3', n:'Hapvida', p:'-45,1%' },
-  { t:'MGLU3', n:'Magazine Luiza', p:'-19,4%' },
-  { t:'BBAS3', n:'Banco do Brasil', p:'-13,4%' }
+  { t:'HAPV3', n:'Hapvida', p:'-44,5%' },
+  { t:'LREN3', n:'Lojas Renner', p:'-21,3%' },
+  { t:'POMO4', n:'Marcopolo', p:'-15,7%' }
 ];
 var ACOES_BR_LEITURA = [
-  'Entre as altas, PRIO3 e FLRY3 negociam a múltiplos mais moderados (P/L ~14x) que EMBJ3 (~31x), já bastante precificada após o rali.',
-  'Entre as quedas, nenhuma mostra sinal técnico claro de reversão até o momento — leitura de acompanhamento, não de compra imediata.'
+  'Entre as altas, SLC Agrícola e CSN subiram após resultados do 2T26 acima do esperado (lucro maior e desalavancagem, respectivamente) e MRV após prejuízo bem menor que o do ano anterior — movimento concentrado em agosto, típico de reação a balanço, sem confirmação ainda de tendência de médio prazo.',
+  'Entre as quedas, Hapvida e Lojas Renner recuaram após balanços fracos e cortes de guidance, com revisões negativas de bancos e gestoras (Goldman Sachs, UBS BB, Squadra); Marcopolo caiu por surpresa negativa de margem no 2T26 mesmo com lucro maior — sinal de atenção do mercado à qualidade do resultado, não de reversão técnica confirmada.'
 ];
-var ACOES_BR_RODAPE = '*Reação ao balanço do 2T26 (13/ago). Levantamento manual na B3 em 23/08/2026 — cotações mudam diariamente; confirme o preço atual antes de qualquer decisão. Conteúdo informativo, não é recomendação de compra ou venda.';
+var ACOES_BR_RODAPE = 'Levantamento manual na B3 em 03/09/2026, com base em notícias de mercado sobre o desempenho do trimestre (jun-ago/2026) — cotações mudam diariamente; confirme o preço atual antes de qualquer decisão. Conteúdo informativo, não é recomendação de compra ou venda.';
 
 // Assessora responsável — usada na assinatura da proposta em PDF.
 var ADVISOR = {
